@@ -8,4 +8,4 @@ RUN go build -o main .
 
 EXPOSE 8080
 
-CMD ["./home/student/coffee/cmd/main.go"]
+CMD ["./main"]
