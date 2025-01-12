@@ -1,104 +1,83 @@
 package service
 
 import (
-	"errors"
+	"fmt"
 
-	"coffee/internal/dal"
-	"coffee/models"
+	"frappuccino/internal/dal"
+	"frappuccino/models"
 )
 
-type MenuServiceInterface interface {
-	AddMenuItem(item models.MenuItem) error
-	GetAllMenuItems() ([]models.MenuItem, error)
-	GetMenuItemById(id string) (models.MenuItem, error)
-	UpdateMenuItem(item models.MenuItem) error
-	DeleteMenuItemById(id string) error
-}
-
-type menuService struct {
-	menuRepo dal.MenuRepository
-}
-
-func NewMenuService(menuRepo dal.MenuRepository) *menuService {
-	return &menuService{menuRepo: menuRepo}
-}
-
-func (s *menuService) AddMenuItem(item models.MenuItem) error {
-	if !IsMenuValid(item) {
-		return errors.New("invalid menu item")
-	}
-	menuItems, err := s.menuRepo.GetAll()
-	if err != nil {
-		return err
-	}
-	pres, err := s.menuRepo.Exists(item.ID)
-	if err != nil {
-		return err
-	}
-	if pres {
-		return errors.New("menu item already exists")
-	}
-	menuItems = append(menuItems, item)
-	err = s.menuRepo.SaveAll(menuItems)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *menuService) GetAllMenuItems() ([]models.MenuItem, error) {
-	menuItems, err := s.menuRepo.GetAll()
-	if err != nil {
-		return nil, err
-	}
-	return menuItems, nil
-}
-
-func (s *menuService) GetMenuItemById(id string) (models.MenuItem, error) {
-	menuItems, err := s.menuRepo.GetAll()
-	if err != nil {
-		return models.MenuItem{}, err
-	}
-	for _, menuItem := range menuItems {
-		if menuItem.ID == id {
-			return menuItem, nil
+func isUniqueMenu(items []models.MenuItem, id string) bool {
+	for _, item := range items {
+		if item.ID == id {
+			return false
 		}
 	}
-	return models.MenuItem{}, errors.New("menu item not found")
+	return true
 }
 
-func (s *menuService) UpdateMenuItem(item models.MenuItem) error {
-	menuItems, err := s.menuRepo.GetAll()
+func AddMenuItem(items []models.MenuItem, newItem models.MenuItem) Status {
+	if newItem.ID == "" {
+		return NoIdGiven
+	}
+	if !isUniqueMenu(items, newItem.ID) {
+		return IdAlreadyExists
+	}
+	items = append(items, newItem)
+	err := dal.WriteMenu(items)
 	if err != nil {
-		return err
+		return Status{err, 500}
 	}
-	if !IsMenuValid(item) {
-		return errors.New("invalid menu item")
-	}
-	for i := range menuItems {
-		if menuItems[i].ID == item.ID {
-			menuItems[i] = item
-			err = s.menuRepo.SaveAll(menuItems)
-			if err != nil {
-				return err
-			}
-			return nil
-		}
-	}
-	return errors.New("menu item not found")
+	return Success
 }
 
-func (s *menuService) DeleteMenuItemById(id string) error {
-	menuItems, err := s.menuRepo.GetAll()
-	if err != nil {
-		return err
+func UpdateMenuItem(items []models.MenuItem, newItem models.MenuItem, id string) ([]models.MenuItem, Status) {
+	if isUniqueMenu(items, id) {
+		return nil, NotFound
 	}
-	for index, menuItem := range menuItems {
-		if menuItem.ID == id {
-			menuItems = append(menuItems[:index], menuItems[index+1:]...)
-			s.menuRepo.SaveAll(menuItems)
-			return nil
+	if id != newItem.ID {
+		return nil, Status{fmt.Errorf("%s should equal to id in body.", id), 400}
+	}
+	newItems := make([]models.MenuItem, 0)
+
+	for _, item := range items {
+		if item.ID == id {
+			newItems = append(newItems, newItem)
+			continue
+		}
+		newItems = append(newItems, item)
+	}
+	err := dal.WriteMenu(newItems)
+	if err != nil {
+		return nil, Status{err, 500}
+	}
+	return newItems, Success
+}
+
+func FindMenuItem(items []models.MenuItem, id string) (models.MenuItem, Status) {
+	for _, item := range items {
+		if item.ID == id {
+			return item, Success
 		}
 	}
-	return errors.New("menu item not found")
+	return models.MenuItem{}, NotFound
+}
+
+func RemoveMenuItem(items []models.MenuItem, id string) Status {
+	if isUniqueMenu(items, id) {
+		return NotFound
+	}
+	newItems := make([]models.MenuItem, 0)
+
+	for _, item := range items {
+		if item.ID == id {
+			continue
+		}
+		newItems = append(newItems, item)
+	}
+	err := dal.WriteMenu(newItems)
+	if err != nil {
+		return Status{err, 500}
+	}
+	return Success
 }

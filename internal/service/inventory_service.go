@@ -1,104 +1,86 @@
 package service
 
 import (
-	"errors"
+	"fmt"
 
-	"coffee/internal/dal"
-	"coffee/models"
+	"frappuccino/internal/dal"
+	"frappuccino/models"
 )
 
-type InventoryService interface {
-	AddInventoryItem(item models.InventoryItem) error
-	DeleteInventoryItem(id string) error
-	GetInventoryItem() ([]models.InventoryItem, error)
-	GetInventoryItemById(id string) (models.InventoryItem, error)
-	UpdateInventoryItem(item models.InventoryItem) error
-}
+// NOTE: Service is about how data operates () not how it looks. Should include every operations with item subfunctions: item.({data})
+// CreateInventoryItem Creates ...
 
-type inventoryService struct {
-	inventoryRepo dal.InventoryRepository
-}
-
-func NewInventoryService(inventoryRepo dal.InventoryRepository) *inventoryService {
-	return &inventoryService{inventoryRepo: inventoryRepo}
-}
-
-func (s *inventoryService) AddInventoryItem(item models.InventoryItem) error {
-	if !IsInventoryValid(item) {
-		return errors.New("invalid inventory item")
-	}
-	inventories, err := s.inventoryRepo.GetAll()
-	if err != nil {
-		return errors.New("failed to get inventory items")
-	}
-
-	if b, _ := s.inventoryRepo.Exists(item); b {
-		return errors.New("item already exists")
-	}
-
-	inventories = append(inventories, item)
-
-	if err := s.inventoryRepo.SaveAll(inventories); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (s *inventoryService) DeleteInventoryItem(id string) error {
-	inventories, err := s.inventoryRepo.GetAll()
-	if err != nil {
-		return err
-	}
-
-	for i, inventory := range inventories {
-		if inventory.IngredientID == id {
-			inventories = append(inventories[:i], inventories[i+1:]...)
+func isUniqueInventory(items []models.InventoryItem, id string) bool {
+	for _, item := range items {
+		if item.IngredientID == id {
+			return false
 		}
 	}
-	if err := s.inventoryRepo.SaveAll(inventories); err != nil {
-		return err
-	}
-	return nil
+	return true
 }
 
-func (s *inventoryService) GetInventoryItem() ([]models.InventoryItem, error) {
-	inventories, err := s.inventoryRepo.GetAll()
-	if err != nil {
-		return []models.InventoryItem{}, err
+func AddInventoryItem(items []models.InventoryItem, newItem models.InventoryItem) Status {
+	if newItem.IngredientID == "" {
+		return NoIdGiven
 	}
-
-	return inventories, nil
+	if !isUniqueInventory(items, newItem.IngredientID) {
+		return IdAlreadyExists
+	}
+	items = append(items, newItem)
+	err := dal.WriteInventory(items)
+	if err != nil {
+		return Status{err, 500}
+	}
+	return Success
 }
 
-func (s *inventoryService) GetInventoryItemById(id string) (models.InventoryItem, error) {
-	inventoryItems, err := s.inventoryRepo.GetAll()
-	if err != nil {
-		return models.InventoryItem{}, err
-	}
-	for _, inventoryItem := range inventoryItems {
-		if inventoryItem.IngredientID == id {
-			return inventoryItem, nil
+func FindInventoryItem(items []models.InventoryItem, id string) (models.InventoryItem, Status) {
+	for i, item := range items {
+		if item.IngredientID == id {
+			return items[i], Success
 		}
 	}
-	return models.InventoryItem{}, errors.New("inventory item not found")
+	return models.InventoryItem{}, NotFound
 }
 
-func (s *inventoryService) UpdateInventoryItem(item models.InventoryItem) error {
-	inventoryItems, err := s.inventoryRepo.GetAll()
-	if err != nil {
-		return err
+func UpdateInventoryItem(items []models.InventoryItem, newItem models.InventoryItem, id string) ([]models.InventoryItem, Status) {
+	if isUniqueInventory(items, id) {
+		return nil, NotFound
 	}
-	for i := range inventoryItems {
-		if inventoryItems[i].IngredientID == item.IngredientID {
+	if id != newItem.IngredientID {
+		return nil, Status{fmt.Errorf("%s should equal to id in body.", id), 400}
+	}
+	newItems := make([]models.InventoryItem, 0)
 
-			inventoryItems[i].Quantity += item.Quantity
-			err = s.inventoryRepo.SaveAll(inventoryItems)
-			if err != nil {
-				return err
-			}
-			return nil
+	for _, item := range items {
+		if item.IngredientID == id {
+			newItems = append(newItems, newItem)
+			continue
 		}
+		newItems = append(newItems, item)
 	}
-	return errors.New("inventory item not found")
+	err := dal.WriteInventory(newItems)
+	if err != nil {
+		return nil, Status{err, 500}
+	}
+	return newItems, Success
+}
+
+func RemoveInventoryItem(items []models.InventoryItem, id string) Status {
+	if isUniqueInventory(items, id) {
+		return NotFound
+	}
+	newItems := make([]models.InventoryItem, 0)
+
+	for _, item := range items {
+		if item.IngredientID == id {
+			continue
+		}
+		newItems = append(newItems, item)
+	}
+	err := dal.WriteInventory(newItems)
+	if err != nil {
+		return Status{err, 500}
+	}
+	return Success
 }

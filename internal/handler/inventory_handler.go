@@ -1,114 +1,91 @@
 package handler
 
 import (
-	"encoding/json"
-	"log/slog"
 	"net/http"
 
-	"coffee/internal/service"
-	"coffee/models"
+	"frappuccino/config"
+	"frappuccino/internal/dal"
+	"frappuccino/internal/service"
 )
 
-type InventoryHandler interface {
-	PostItem(w http.ResponseWriter, r *http.Request)
-	GetAllItem(w http.ResponseWriter, r *http.Request)
-	GetItemById(w http.ResponseWriter, r *http.Request)
-	DeleteItem(w http.ResponseWriter, r *http.Request)
-	PutItem(w http.ResponseWriter, r *http.Request)
-}
+// NOTE: Handler is about how data looks not how it operates
+// TODO: fix naming
 
-type inventoryHandler struct {
-	inventoryService service.InventoryService
-}
-
-func NewInventoryHandler(inventoryService service.InventoryService) *inventoryHandler {
-	return &inventoryHandler{inventoryService: inventoryService}
-}
-
-func (h *inventoryHandler) PostItem(w http.ResponseWriter, r *http.Request) {
-	var newInventoryItem models.InventoryItem
-	if err := json.NewDecoder(r.Body).Decode(&newInventoryItem); err != nil {
-		RespondWithJson(w, ErrorResponse{Message: err.Error()}, http.StatusNotFound)
-		slog.Error("Failed to decode", err.Error(), "no new item to post")
-		return
-	}
-	if err := h.inventoryService.AddInventoryItem(newInventoryItem); err != nil {
-		if err.Error() == "item already exists" {
-			RespondWithJson(w, ErrorResponse{Message: "item already exists"}, http.StatusConflict)
-			slog.Error("Item already exists")
-			return
-		}
-
-		RespondWithJson(w, ErrorResponse{Message: err.Error()}, http.StatusNotFound)
-		slog.Error("Failed AddInventoryItem", err.Error(), "no new item to post")
-		return
-	}
-	slog.Info("Inventory posted", "inventoryID", newInventoryItem.IngredientID)
-	w.WriteHeader(http.StatusCreated)
-}
-
-func (h *inventoryHandler) GetAllItem(w http.ResponseWriter, r *http.Request) {
-	inventoryItems, err := h.inventoryService.GetInventoryItem()
+func PostInventoryItem(w http.ResponseWriter, r *http.Request) {
+	items, err := dal.ReadInventory()
 	if err != nil {
-		RespondWithJson(w, ErrorResponse{Message: err.Error()}, http.StatusNotFound)
-		slog.Error("Failed to get", err.Error(), "no new item to post")
+		config.Error(w, 500, err.Error())
 		return
 	}
 
-	jsonData, err := json.MarshalIndent(inventoryItems, "", "  ")
+	newItem, err := dal.ContentToInventoryItem(r.Body)
 	if err != nil {
-		RespondWithJson(w, ErrorResponse{Message: err.Error()}, http.StatusNotFound)
-		slog.Error("Failed to MarshalIndent", err.Error(), "no new item to post")
+		config.Error(w, 500, err.Error())
 		return
 	}
-	slog.Info("Inventory got", "inventoryID", inventoryItems)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write(jsonData)
+
+	response := service.AddInventoryItem(items, newItem)
+	if response.ErrorMessage != nil {
+		config.Error(w, response.Code, response.ErrorMessage.Error())
+		return
+	}
+	config.SendResponse(w, r, newItem, "Post Inventory.", 201)
 }
 
-func (h *inventoryHandler) GetItemById(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Path[len("/inventory/"):]
-
-	inventoryItem, err := h.inventoryService.GetInventoryItemById(id)
+func GetInventory(w http.ResponseWriter, r *http.Request) {
+	items, err := dal.ReadInventory()
 	if err != nil {
-		RespondWithJson(w, ErrorResponse{Message: err.Error()}, http.StatusNotFound)
-		slog.Error("Failed to get", err.Error(), "no new item to post")
+		config.Error(w, 500, err.Error())
 		return
 	}
-	err = setBodyToJson(w, inventoryItem)
-	if err != nil {
-		RespondWithJson(w, ErrorResponse{Message: err.Error()}, http.StatusInternalServerError)
-		slog.Error("Failed to get", err.Error(), "no new item to post")
-		return
-	}
-	slog.Info("Inventory got", "inventoryID", inventoryItem.IngredientID)
+	config.SendResponse(w, r, items, "Get Inventory.", 200)
 }
 
-func (h *inventoryHandler) DeleteItem(w http.ResponseWriter, r *http.Request) {
-	idForDeletion := r.URL.Path[len("/inventory/"):]
-	if err := h.inventoryService.DeleteInventoryItem(idForDeletion); err != nil {
-		RespondWithJson(w, ErrorResponse{Message: err.Error()}, http.StatusNotFound)
-		slog.Error("Failed to MarshalIndent", err.Error(), "no new item to post")
+func GetInventoryItem(w http.ResponseWriter, r *http.Request, id string) {
+	items, err := dal.ReadInventory()
+	if err != nil {
+		config.Error(w, 500, err.Error())
 		return
 	}
-	slog.Info("Inventory delete", "inventoryID", idForDeletion)
-	w.WriteHeader(http.StatusNoContent)
+	item, response := service.FindInventoryItem(items, id)
+	if response.ErrorMessage != nil {
+		config.Error(w, response.Code, response.ErrorMessage.Error())
+		return
+	}
+	config.SendResponse(w, r, item, "Get Inventory Item.", 200)
 }
 
-func (h *inventoryHandler) PutItem(w http.ResponseWriter, r *http.Request) {
-	var inventoryItem models.InventoryItem
-	err := json.NewDecoder(r.Body).Decode(&inventoryItem)
+func PutInventoryItem(w http.ResponseWriter, r *http.Request, id string) {
+	items, err := dal.ReadInventory()
 	if err != nil {
-		RespondWithJson(w, ErrorResponse{Message: err.Error()}, http.StatusBadRequest)
-		slog.Error("Failed to decode", err.Error(), "no new item to post")
+		config.Error(w, 500, err.Error())
 		return
 	}
-	err = h.inventoryService.UpdateInventoryItem(inventoryItem)
+
+	newItem, err := dal.ContentToInventoryItem(r.Body)
 	if err != nil {
-		RespondWithJson(w, ErrorResponse{Message: err.Error()}, http.StatusNotFound)
-		slog.Error("Failed to MarshalIndent", err.Error(), "no new item to post")
+		config.Error(w, 500, err.Error())
 		return
 	}
-	slog.Info("Inventory put", "inventoryID", inventoryItem.IngredientID)
+
+	_, response := service.UpdateInventoryItem(items, newItem, id)
+	if response.ErrorMessage != nil {
+		config.Error(w, response.Code, response.ErrorMessage.Error())
+	}
+	config.SendResponse(w, r, newItem, "Put Inventory.", 200)
+}
+
+func DeleteInventoryItem(w http.ResponseWriter, r *http.Request, id string) {
+	items, err := dal.ReadInventory()
+	if err != nil {
+		config.Error(w, 500, err.Error())
+		return
+	}
+
+	response := service.RemoveInventoryItem(items, id)
+	if response.ErrorMessage != nil {
+		config.Error(w, response.Code, response.ErrorMessage.Error())
+		return
+	}
+	config.SendResponse(w, r, nil, "Delete Inventory.", 200)
 }

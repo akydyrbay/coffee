@@ -2,78 +2,64 @@ package dal
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
+	"io/ioutil"
 	"os"
 
-	"coffee/models"
+	"frappuccino/config"
+	"frappuccino/models"
 )
 
-const pathOrder = "data/orders.json"
+// Internal server errors
+func ReadOrders() ([]models.Order, error) {
+	jsonFile, err := os.Open(config.Path + "orders.json")
+	items := make([]models.Order, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer jsonFile.Close()
 
-type OrderRepository interface {
-	SaveAll([]models.Order) error
-	GetAll() ([]models.Order, error)
-	Exists(orderID string) (bool, error)
+	byteValue, err := ioutil.ReadAll(jsonFile)
+	if err != nil {
+		return nil, err
+	}
+
+	err = json.Unmarshal(byteValue, &items)
+	if err != nil {
+		return nil, err
+	}
+
+	return items, nil
 }
 
-type orderRepo struct {
-	path string
-}
-
-func NewOrderRepo(path string) *orderRepo {
-	return &orderRepo{path: path}
-}
-
-func (r *orderRepo) SaveAll(order []models.Order) error {
-	jsonData, err := json.MarshalIndent(order, "", "  ")
+func WriteOrders(items []models.Order) error {
+	jsonString, err := json.MarshalIndent(items, "", "    ")
 	if err != nil {
 		return err
 	}
-	_, err = os.Stat(r.path)
-	if os.IsNotExist(err) {
-		file, err := os.Create(r.path)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-	}
-	err = os.WriteFile(r.path, jsonData, 0o644)
+
+	err = ioutil.WriteFile(config.Path+"orders.json", jsonString, os.ModePerm)
 	if err != nil {
 		return err
 	}
+
 	return nil
 }
 
-func (r *orderRepo) GetAll() ([]models.Order, error) {
-	var result []models.Order
-	_, err := os.Stat(r.path)
-	if os.IsNotExist(err) {
-		file, err := os.Create(r.path)
-		if err != nil {
-			return nil, err
-		}
-		defer file.Close()
-	}
-	byteMenu, err := os.ReadFile(r.path)
-	if len(byteMenu) == 0 {
-		return result, err
-	}
-
-	if err := json.Unmarshal(byteMenu, &result); err != nil {
-		return result, err
-	}
-
-	return result, nil
-}
-
-func (r *orderRepo) Exists(orderID string) (bool, error) {
-	orderItems, err := r.GetAll()
+func ContentToOrder(content io.ReadCloser) (models.Order, error) {
+	byteValue, err := ioutil.ReadAll(content)
 	if err != nil {
-		return false, err
+		return models.Order{}, err
 	}
-	for _, orderItem := range orderItems {
-		if orderItem.ID == orderID {
-			return true, nil
-		}
+
+	var item models.Order
+	err = json.Unmarshal(byteValue, &item)
+	if err != nil {
+		return models.Order{}, err
 	}
-	return false, nil
+	if item.CreatedAt != "" || item.Status != "" {
+		return models.Order{}, fmt.Errorf("Status and creation time can not be passed.")
+	}
+	return item, nil
 }

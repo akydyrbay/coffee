@@ -1,120 +1,87 @@
 package handler
 
 import (
-	"encoding/json"
-	"log/slog"
 	"net/http"
-	"strings"
 
-	"coffee/internal/service"
-	"coffee/models"
+	"frappuccino/config"
+	"frappuccino/internal/dal"
+	"frappuccino/internal/service"
 )
 
-type MenuHandler interface {
-	PostMenuHandler(w http.ResponseWriter, r *http.Request)
-	GetAllMenuHandler(w http.ResponseWriter, r *http.Request)
-	GetMenuItemHandler(w http.ResponseWriter, r *http.Request)
-	PutMenuHandler(w http.ResponseWriter, r *http.Request)
-	DeleteMenuHandler(w http.ResponseWriter, r *http.Request)
+func PostMenuItem(w http.ResponseWriter, r *http.Request) {
+	items, err := dal.ReadMenu()
+	if err != nil {
+		config.Error(w, 500, err.Error())
+		return
+	}
+	newItem, err := dal.ContentToMenu(r.Body)
+	if err != nil {
+		config.Error(w, 500, err.Error())
+		return
+	}
+
+	response := service.AddMenuItem(items, newItem)
+	if response.ErrorMessage != nil {
+		config.Error(w, response.Code, response.ErrorMessage.Error())
+		return
+	}
+	config.SendResponse(w, r, newItem, "Post Menu Item", 201)
 }
 
-type menuHandler struct {
-	menuService service.MenuServiceInterface
+func GetMenu(w http.ResponseWriter, r *http.Request) {
+	items, err := dal.ReadMenu()
+	if err != nil {
+		config.Error(w, 500, err.Error())
+		return
+	}
+	config.SendResponse(w, r, items, "Get Menu", 200)
 }
 
-func NewMenuHandler(menuService service.MenuServiceInterface) *menuHandler {
-	return &menuHandler{menuService: menuService}
+func GetMenuItem(w http.ResponseWriter, r *http.Request, id string) {
+	items, err := dal.ReadMenu()
+	if err != nil {
+		config.Error(w, 500, err.Error())
+		return
+	}
+	item, response := service.FindMenuItem(items, id)
+	if response.ErrorMessage != nil {
+		config.Error(w, response.Code, response.ErrorMessage.Error())
+		return
+	}
+	config.SendResponse(w, r, item, "Get Menu Item", 200)
 }
 
-func (h *menuHandler) PostMenuHandler(w http.ResponseWriter, r *http.Request) {
-	var newMenuitem models.MenuItem
-	json.NewDecoder(r.Body).Decode(&newMenuitem)
-	err := h.menuService.AddMenuItem(newMenuitem)
+func PutMenuItem(w http.ResponseWriter, r *http.Request, id string) {
+	items, err := dal.ReadMenu()
 	if err != nil {
-		RespondWithJson(w, ErrorResponse{Message: err.Error()}, http.StatusBadRequest)
-		slog.Error("Failed to AddMenuItem", err.Error(), "no menu posted")
+		config.Error(w, 500, err.Error())
 		return
 	}
-	slog.Info("menu posted", "menuID", newMenuitem.ID)
-	w.WriteHeader(http.StatusCreated)
+
+	newItem, err := dal.ContentToMenu(r.Body)
+	if err != nil {
+		config.Error(w, 500, err.Error())
+		return
+	}
+
+	_, response := service.UpdateMenuItem(items, newItem, id)
+	if response.ErrorMessage != nil {
+		config.Error(w, response.Code, response.ErrorMessage.Error())
+	}
+	config.SendResponse(w, r, newItem, "Put Menu Item", 200)
 }
 
-func (h *menuHandler) GetAllMenuHandler(w http.ResponseWriter, r *http.Request) {
-	menuItems, err := h.menuService.GetAllMenuItems()
+func DeleteMenuItem(w http.ResponseWriter, r *http.Request, id string) {
+	items, err := dal.ReadMenu()
 	if err != nil {
-		RespondWithJson(w, ErrorResponse{Message: err.Error()}, http.StatusInternalServerError)
-		slog.Error("Failed to GetAllMenuItems", err.Error(), "no menu posted")
+		config.Error(w, 500, err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	jsonMenus, err := json.MarshalIndent(menuItems, "", "  ")
-	if err != nil {
-		RespondWithJson(w, ErrorResponse{Message: err.Error()}, http.StatusInternalServerError)
-		slog.Error("Failed to MarshalIndent", err.Error(), "no menu posted")
-		return
-	}
-	slog.Info("menu posted", "menuID", menuItems)
-	w.Write(jsonMenus)
-}
 
-func (h *menuHandler) GetMenuItemHandler(w http.ResponseWriter, r *http.Request) {
-	pathParam := strings.Split(r.URL.Path, "/")
-	if len(pathParam) != 3 {
-		RespondWithJson(w, ErrorResponse{Message: "Invalid path"}, http.StatusBadRequest)
-		slog.Error("Failed to get input", "wrong input", "no menu posted")
+	response := service.RemoveMenuItem(items, id)
+	if response.ErrorMessage != nil {
+		config.Error(w, response.Code, response.ErrorMessage.Error())
 		return
 	}
-	id := pathParam[2]
-	menuItem, err := h.menuService.GetMenuItemById(id)
-	if err != nil {
-		RespondWithJson(w, ErrorResponse{Message: err.Error()}, http.StatusNotFound)
-		slog.Error("Failed to GetMenuItemById", err.Error(), "no menu posted")
-		return
-	}
-	err = setBodyToJson(w, menuItem)
-	if err != nil {
-		RespondWithJson(w, ErrorResponse{Message: err.Error()}, http.StatusInternalServerError)
-		slog.Error("Failed to setBodyToJson", err.Error(), "no menu posted")
-		return
-	}
-	slog.Info("menu posted", "menuID", menuItem.ID)
-}
-
-func (h *menuHandler) PutMenuHandler(w http.ResponseWriter, r *http.Request) {
-	var menuItem models.MenuItem
-	id := r.URL.Path[len("/menu/"):]
-	err := json.NewDecoder(r.Body).Decode(&menuItem)
-	if err != nil {
-		RespondWithJson(w, ErrorResponse{Message: err.Error()}, http.StatusBadRequest)
-		slog.Error("Failed to decode", err.Error(), "no menu posted")
-		return
-	}
-	if menuItem.ID != id {
-		RespondWithJson(w, ErrorResponse{Message: "Menu ID conflict"}, http.StatusBadRequest)
-	}
-	err = h.menuService.UpdateMenuItem(menuItem)
-	if err != nil {
-		RespondWithJson(w, ErrorResponse{Message: err.Error()}, http.StatusNotFound)
-		slog.Error("Failed to UpdateMenuItem", err.Error(), "no menu posted")
-		return
-	}
-	slog.Info("menu posted", "menuID", menuItem.ID)
-}
-
-func (h *menuHandler) DeleteMenuHandler(w http.ResponseWriter, r *http.Request) {
-	pathParam := strings.Split(r.URL.Path, "/")
-	if len(pathParam) != 3 {
-		RespondWithJson(w, ErrorResponse{Message: "Invalid path"}, http.StatusBadRequest)
-		slog.Error("Failed to get", "wrong input", "no menu posted")
-		return
-	}
-	id := pathParam[2]
-	err := h.menuService.DeleteMenuItemById(id)
-	if err != nil {
-		RespondWithJson(w, ErrorResponse{Message: err.Error()}, http.StatusNotFound)
-		slog.Error("Failed to DeleteMenuItemById", err.Error(), "no menu posted")
-		return
-	}
-	slog.Info("menu posted", "menuID", id)
-	w.WriteHeader(http.StatusNoContent)
+	config.SendResponse(w, r, nil, "Delete Menu Item", 200)
 }

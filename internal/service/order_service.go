@@ -1,215 +1,203 @@
 package service
 
 import (
-	"errors"
 	"fmt"
-	"math/rand"
-	"strconv"
 	"time"
 
-	"coffee/internal/dal"
-	"coffee/models"
+	"frappuccino/internal/dal"
+	"frappuccino/models"
 )
 
-type OrderService interface {
-	GetOrderItemById(id string) (models.Order, error)
-	GetOrderItem() ([]models.Order, error)
-	PostNewOrder(order models.Order) error
-	UpdateOrderStatus(orderId string) error
-	UpdateOrder(orderId string, newOrder models.Order) error
-	DeleteOrder(orderId string) error
-}
-
-type orderService struct {
-	orderRepo     dal.OrderRepository
-	menuRepo      dal.MenuRepository
-	inventoryRepo dal.InventoryRepository
-}
-
-func getFormattedTime() string {
-	// Get current time in UTC
-	currentTime := time.Now().UTC()
-
-	// Format time in the desired format
-	return currentTime.Format("2006-01-02T15:04:05Z")
-}
-
-func NewOrderService(orderRepo dal.OrderRepository, menuRepo dal.MenuRepository, inventoryRepo dal.InventoryRepository) *orderService {
-	return &orderService{orderRepo: orderRepo, menuRepo: menuRepo, inventoryRepo: inventoryRepo}
-}
-
-func (s *orderService) GetOrderItemById(id string) (models.Order, error) {
-	orderItems, err := s.orderRepo.GetAll()
-	if err != nil {
-		return models.Order{}, err
-	}
-	for _, orderItem := range orderItems {
-		if orderItem.ID == id {
-			return orderItem, nil
+// NOTE: Service is about how data operates, not how it looks. Should include every operations with orders subfunctions: order.({data})
+func isUniqueOrder(orders []models.Order, id string) bool {
+	for _, order := range orders {
+		if order.ID == id {
+			return false
 		}
 	}
-	return models.Order{}, errors.New("inventory item not found")
+	return true
 }
 
-func (s *orderService) GetOrderItem() ([]models.Order, error) {
-	orderItems, err := s.orderRepo.GetAll()
+func completeOrder(newOrder models.Order) Status {
+	// CHECK.
+	inventory, err := dal.ReadInventory()
 	if err != nil {
-		return []models.Order{}, err
+		return Status{ErrorMessage: err, Code: 500}
 	}
-
-	return orderItems, nil
+	menu, err := dal.ReadMenu()
+	if err != nil {
+		return Status{ErrorMessage: err, Code: 500}
+	}
+	err = checkOrder(newOrder, menu, inventory)
+	if err != nil {
+		return Status{ErrorMessage: err, Code: 400}
+	}
+	// DEDUCT.
+	err = updateQuantity(newOrder, menu, inventory)
+	if err != nil {
+		return Status{ErrorMessage: err, Code: 500}
+	}
+	return Success
 }
 
-func (s *orderService) UpdateOrderStatus(id string) error {
-	orderItems, err := s.orderRepo.GetAll()
-	if err != nil {
-		return err
+func AddOrder(orders []models.Order, newOrder models.Order) Status {
+	if newOrder.ID == "" {
+		return NoIdGiven
 	}
+	if !isUniqueOrder(orders, newOrder.ID) {
+		return IdAlreadyExists
+	}
+	newOrder.Status = "open"
+	t := time.Now()
+	t = t.UTC()
+	newOrder.CreatedAt = t.Format("2006-01-02T15:04:05Z07:00")
+	orders = append(orders, newOrder)
+	err := dal.WriteOrders(orders)
+	if err != nil {
+		return Status{err, 500}
+	}
+	return Success
+}
 
-	for i := range orderItems {
-		if orderItems[i].ID == id {
-			if orderItems[i].Status == "closed" {
-				return errors.New("order is already closed")
-			}
-			orderItems[i].Status = "closed"
-			err = s.orderRepo.SaveAll(orderItems)
-			if err != nil {
-				return err
-			}
-			return nil
+func FindOrder(orders []models.Order, id string) (models.Order, Status) {
+	for _, order := range orders {
+		if order.ID == id {
+			return order, Success
 		}
 	}
-	return errors.New("order item not found")
+	return models.Order{}, NotFound
 }
 
-func (s *orderService) DeleteOrder(orderId string) error {
-	orderItems, err := s.orderRepo.GetAll()
-	if err != nil {
-		return err
+func UpdateOrder(orders []models.Order, newOrder models.Order, id string) Status {
+	if isUniqueOrder(orders, id) {
+		return NotFound
+	}
+	if id != newOrder.ID {
+		return Status{fmt.Errorf("%s should equal to id in body.", id), 400}
 	}
 
-	for i := range orderItems {
-		if orderItems[i].ID == orderId {
-			if orderItems[i].Status == "closed" {
-				return errors.New("order is already closed")
-			}
-			inventoryRepo, err := s.inventoryRepo.GetAll()
-			if err != nil {
-				return err
-			}
-			menus, err := s.menuRepo.GetAll()
-			if err != nil {
-				return err
-			}
-			fmt.Println(len(orderItems))
-			newInvent, err := UpdateInventoryByOrder(inventoryRepo, orderItems[i], menus, false)
-			if err != nil {
-				return err
-			}
-			orderItems = append(orderItems[:i], orderItems[i+1:]...)
-			err = s.inventoryRepo.SaveAll(newInvent)
-			if err != nil {
-				return err
-			}
-			s.orderRepo.SaveAll(orderItems)
-			return nil
-		}
+	order, response := FindOrder(orders, id)
+	if response.ErrorMessage != nil {
+		return response
 	}
-
-	return errors.New("order item not found")
-}
-
-func (s *orderService) PostNewOrder(order models.Order) error {
-	if !IsOrderValid(order) {
-		return errors.New("order is invalid")
+	if order.Status != "open" {
+		return Status{fmt.Errorf("Order is not opened."), 400}
 	}
-	err := IsValidOrder(order, s.menuRepo, s.inventoryRepo)
-	if err != nil {
-		return err
-	}
-	order.CreatedAt = getFormattedTime()
-	orderItems, err := s.orderRepo.GetAll()
-	if err != nil {
-		return err
-	}
-	order.ID = strconv.Itoa(rand.Intn(99))
-	for {
-		pres, err := s.orderRepo.Exists(order.ID)
-		if err != nil {
-			return err
-		}
-		if pres {
-			order.ID = strconv.Itoa(rand.Intn(99))
+	newOrder.Status = "open"
+	newOrders := make([]models.Order, 0)
+	for _, order := range orders {
+		if order.ID == id {
+			newOrders = append(newOrders, newOrder)
 			continue
 		}
-		break
+		newOrders = append(newOrders, order)
+	}
+	err := dal.WriteOrders(newOrders)
+	if err != nil {
+		return Status{err, 500}
+	}
+	return Success
+}
+
+func RemoveOrder(orders []models.Order, id string) Status {
+	if isUniqueOrder(orders, id) {
+		return NotFound
+	}
+	newOrders := make([]models.Order, 0)
+	for _, order := range orders {
+		if order.ID == id {
+			continue
+		}
+		newOrders = append(newOrders, order)
+	}
+	err := dal.WriteOrders(newOrders)
+	if err != nil {
+		return Status{err, 500}
+	}
+	return Success
+}
+
+func FinishOrder(orders []models.Order, id string, status string) Status {
+	// if isUniqueOrder(orders, id) {
+	// 	return NotFound
+	// }
+	newOrder, response := FindOrder(orders, id)
+	if response.ErrorMessage != nil {
+		return response
+	}
+	if newOrder.Status != "open" {
+		return Status{fmt.Errorf("The order is already closed."), 400}
+	}
+	response = completeOrder(newOrder)
+	if response.ErrorMessage != nil {
+		return response
+	}
+	newOrder.Status = status
+
+	newOrders := make([]models.Order, 0)
+	for _, order := range orders {
+		if order.ID == id {
+			newOrders = append(newOrders, newOrder)
+			continue
+		}
+		newOrders = append(newOrders, order)
 	}
 
-	order.Status = "open"
-	orderItems = append(orderItems, order)
-	err = s.orderRepo.SaveAll(orderItems)
+	err := dal.WriteOrders(newOrders)
 	if err != nil {
-		return err
+		return Status{err, 500}
 	}
-	inventoryRepo, err := s.inventoryRepo.GetAll()
-	if err != nil {
-		return err
-	}
-	menus, err := s.menuRepo.GetAll()
-	if err != nil {
-		return err
-	}
-	newInvent, err := UpdateInventoryByOrder(inventoryRepo, order, menus, true)
-	if err != nil {
-		return err
-	}
-	err = s.inventoryRepo.SaveAll(newInvent)
-	if err != nil {
-		return err
+	return Success
+}
+
+func checkOrder(order models.Order, menuItems []models.MenuItem, inventoryItems []models.InventoryItem) error {
+	for _, orderItem := range order.Items {
+		menuItem, response := FindMenuItem(menuItems, orderItem.ProductID)
+		if response == NotFound {
+			return fmt.Errorf("Invalid product ID in order items.")
+		}
+
+		if response.ErrorMessage != nil {
+			return response.ErrorMessage
+		}
+		for _, orderIngridient := range menuItem.Ingredients {
+			inventoryItem, response := FindInventoryItem(inventoryItems, orderIngridient.IngredientID)
+			if response.ErrorMessage != nil {
+				return response.ErrorMessage
+			}
+			if inventoryItem.Quantity-(orderIngridient.Quantity*orderItem.Quantity) < 0 {
+				return fmt.Errorf("Insufficient inventory for ingredient '%s'. Required: %d%s, Available: %d%s.", orderIngridient.IngredientID, orderIngridient.Quantity*orderItem.Quantity, inventoryItem.Unit, inventoryItem.Quantity, inventoryItem.Unit)
+			}
+		}
 	}
 	return nil
 }
 
-func (s *orderService) UpdateOrder(orderId string, newOrder models.Order) error {
-	orders, err := s.orderRepo.GetAll()
+func updateQuantity(order models.Order, menuItems []models.MenuItem, inventoryItems []models.InventoryItem) error {
+	newInventory, err := dal.ReadInventory()
 	if err != nil {
 		return err
 	}
-	if !IsOrderValid(newOrder) {
-		return errors.New("invalid order")
-	}
-	for i := range orders {
-		if orders[i].ID == orderId {
-			if orders[i].Status == "closed" {
-				return errors.New("order is already closed")
+	for _, orderItem := range order.Items {
+		menuItem, response := FindMenuItem(menuItems, orderItem.ProductID)
+		if response.ErrorMessage != nil {
+			return response.ErrorMessage
+		}
+		for _, orderIngridient := range menuItem.Ingredients {
+			newInventoryItem, response := FindInventoryItem(inventoryItems, orderIngridient.IngredientID)
+			if response.ErrorMessage != nil {
+				return response.ErrorMessage
 			}
-			err := IsValidOrder(newOrder, s.menuRepo, s.inventoryRepo)
+			newInventoryItem.Quantity -= (orderIngridient.Quantity * orderItem.Quantity)
+			newInventory, response = UpdateInventoryItem(newInventory, newInventoryItem, newInventoryItem.IngredientID)
+			err = dal.WriteInventory(newInventory)
 			if err != nil {
 				return err
 			}
-			orders[i].Items = append(orders[i].Items, newOrder.Items...)
-			inventoryRepo, err := s.inventoryRepo.GetAll()
-			if err != nil {
-				return err
+			if response.ErrorMessage != nil {
+				return response.ErrorMessage
 			}
-			menus, err := s.menuRepo.GetAll()
-			if err != nil {
-				return err
-			}
-			newInvent, err := UpdateInventoryByOrder(inventoryRepo, orders[i], menus, true)
-			if err != nil {
-				return err
-			}
-			err = s.orderRepo.SaveAll(orders)
-			if err != nil {
-				return err
-			}
-			err = s.inventoryRepo.SaveAll(newInvent)
-			if err != nil {
-				return err
-			}
-			return nil
 		}
 	}
-	return errors.New("order item not found")
+	return nil
 }

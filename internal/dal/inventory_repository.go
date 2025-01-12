@@ -2,39 +2,42 @@ package dal
 
 import (
 	"encoding/json"
+	"io"
+	"io/ioutil"
 	"os"
 
-	"coffee/models"
+	"frappuccino/config"
+	"frappuccino/models"
 )
 
-type InventoryRepository interface {
-	SaveAll(item []models.InventoryItem) error
-	GetAll() ([]models.InventoryItem, error)
-	Exists(item models.InventoryItem) (bool, error)
+// Internal server errors
+func ReadInventory() ([]models.InventoryItem, error) {
+	jsonFile, err := os.Open(config.Path + "inventory.json")
+	items := make([]models.InventoryItem, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer jsonFile.Close()
+
+	byteValue, err := ioutil.ReadAll(jsonFile)
+	if err != nil {
+		return nil, err
+	}
+
+	err = json.Unmarshal(byteValue, &items)
+	if err != nil {
+		return nil, err
+	}
+
+	return items, nil
 }
 
-type inventoryRepo struct {
-	path string
-}
-
-func NewInventoryRepo(path string) *inventoryRepo {
-	return &inventoryRepo{path: path}
-}
-
-func (r *inventoryRepo) SaveAll(item []models.InventoryItem) error {
-	jsonData, err := json.MarshalIndent(item, "", "  ")
+func WriteInventory(items []models.InventoryItem) error {
+	jsonString, err := json.MarshalIndent(items, "", "    ")
 	if err != nil {
 		return err
 	}
-	_, err = os.Stat(r.path)
-	if os.IsNotExist(err) {
-		file, err := os.Create(r.path)
-		if err != nil {
-			return err
-		}
-		file.Close()
-	}
-	err = os.WriteFile(r.path, jsonData, 0o644)
+	err = ioutil.WriteFile(config.Path+"inventory.json", jsonString, os.ModePerm)
 	if err != nil {
 		return err
 	}
@@ -42,43 +45,16 @@ func (r *inventoryRepo) SaveAll(item []models.InventoryItem) error {
 	return nil
 }
 
-func (r *inventoryRepo) GetAll() ([]models.InventoryItem, error) {
-	_, err := os.Stat(r.path)
-	if os.IsNotExist(err) {
-		file, err := os.Create(r.path)
-		if err != nil {
-			return nil, err
-		}
-		defer file.Close()
-	}
-	byteValue, err := os.ReadFile(r.path)
+func ContentToInventoryItem(content io.ReadCloser) (models.InventoryItem, error) {
+	byteValue, err := ioutil.ReadAll(content)
 	if err != nil {
-		return nil, err
+		return models.InventoryItem{}, err
 	}
 
-	if len(byteValue) == 0 {
-		return []models.InventoryItem{}, nil
-	}
-
-	var inventoryData []models.InventoryItem
-
-	if err := json.Unmarshal(byteValue, &inventoryData); err != nil {
-		return nil, err
-	}
-
-	return inventoryData, nil
-}
-
-func (r *inventoryRepo) Exists(item models.InventoryItem) (bool, error) {
-	inventoryData, err := r.GetAll()
+	var item models.InventoryItem
+	err = json.Unmarshal(byteValue, &item)
 	if err != nil {
-		return false, err
+		return models.InventoryItem{}, err
 	}
-
-	for _, inventory := range inventoryData {
-		if inventory.IngredientID == item.IngredientID {
-			return true, nil
-		}
-	}
-	return false, nil
+	return item, nil
 }

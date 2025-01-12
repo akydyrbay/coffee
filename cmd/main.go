@@ -3,10 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
-	"net/http"
-
 	. "frappuccino/config"
 	. "frappuccino/internal/handler"
+	"net/http"
 )
 
 func main() {

@@ -9,6 +9,6 @@ type MenuItem struct {
 }
 
 type MenuItemIngredient struct {
-	IngredientID string  `json:"ingredient_id"`
-	Quantity     float64 `json:"quantity"`
+	IngredientID string `json:"ingredient_id"`
+	Quantity     int    `json:"quantity"`
 }
