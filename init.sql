@@ -1,208 +1,242 @@
--- 1. Create Type Statements
+-- Enable necessary extensions
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";  -- For full-text search capabilities
 
--- ENUM for order status
-CREATE TYPE order_status AS ENUM (
-    'pending',      -- Order is awaiting preparation
-    'in_progress',  -- Order is being prepared
-    'completed',    -- Order is finished
-    'canceled'      -- Order is canceled
+-- Enum types
+CREATE TYPE order_status AS ENUM ('pending', 'processing', 'completed', 'cancelled', 'closed');
+CREATE TYPE inventory_transaction_type AS ENUM ('increment', 'decrement', 'adjustment');
+
+-- Create tables with proper constraints and indexes
+CREATE TABLE customers (
+    id VARCHAR(255) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) UNIQUE,
+    phone VARCHAR(50),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- ENUM for unit of measurement (UOM)
-CREATE TYPE unit_of_measurement AS ENUM (
-    'kg', 'g', 'lb', 'oz', 'liter', 'ml', 'piece'
-);
-
--- Composite type for menu item ingredients
-CREATE TYPE menu_item_ingredients AS (
-    ingredient_id INT,
-    quantity DECIMAL,
-    uom unit_of_measurement
-);
-
--- 2. Create Table Statements
-
--- Core Tables
-
--- Table for menu items (e.g., coffee, snacks)
 CREATE TABLE menu_items (
-    menu_item_id SERIAL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
+    id VARCHAR(255) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
     description TEXT,
-    price DECIMAL(10, 2) NOT NULL,
-    category VARCHAR(50),
-    is_available BOOLEAN DEFAULT TRUE
+    category VARCHAR(100) NOT NULL,
+    current_price DECIMAL(10, 2) NOT NULL,
+    is_available BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT positive_price CHECK (current_price > 0)
 );
 
--- Table for inventory items (e.g., coffee beans, milk)
 CREATE TABLE inventory (
-    inventory_id SERIAL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    quantity DECIMAL(10, 2) NOT NULL,
-    uom unit_of_measurement NOT NULL,
-    price DECIMAL(10, 2) NOT NULL,
-    is_active BOOLEAN DEFAULT TRUE
+    id VARCHAR(255) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    unit VARCHAR(50) NOT NULL,
+    quantity DECIMAL(10, 2) NOT NULL DEFAULT 0,
+    minimum_quantity DECIMAL(10, 2) NOT NULL DEFAULT 0,
+    unit_price DECIMAL(10, 2) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT positive_quantity CHECK (quantity >= 0),
+    CONSTRAINT positive_minimum_quantity CHECK (minimum_quantity >= 0),
+    CONSTRAINT positive_unit_price CHECK (unit_price > 0)
 );
 
--- Table for orders
+CREATE TABLE menu_item_ingredients (
+    menu_item_id VARCHAR(255) REFERENCES menu_items(id) ON DELETE CASCADE,
+    inventory_id VARCHAR(255) REFERENCES inventory(id) ON DELETE RESTRICT,
+    quantity DECIMAL(10, 2) NOT NULL,
+    PRIMARY KEY (menu_item_id, inventory_id),
+    CONSTRAINT positive_quantity CHECK (quantity > 0)
+);
+
 CREATE TABLE orders (
-    order_id SERIAL PRIMARY KEY,
-    order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    customer_name VARCHAR(100),
-    order_status order_status NOT NULL,
-    total_amount DECIMAL(10, 2) NOT NULL
+    id VARCHAR(255) PRIMARY KEY,
+    customer_id VARCHAR(255) REFERENCES customers(id) ON DELETE RESTRICT,
+    status order_status NOT NULL DEFAULT 'pending',
+    total_amount DECIMAL(10, 2) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    closed_at TIMESTAMP WITH TIME ZONE,
+    CONSTRAINT positive_total_amount CHECK (total_amount >= 0)
 );
 
--- Junction Table for menu item ingredients (many-to-many relationship)
-CREATE TABLE menu_item_ingredients_junction (
-    menu_item_id INT REFERENCES menu_items(menu_item_id) ON DELETE CASCADE,
-    inventory_id INT REFERENCES inventory(inventory_id) ON DELETE CASCADE,
-    quantity DECIMAL NOT NULL,
-    uom unit_of_measurement NOT NULL,
-    PRIMARY KEY (menu_item_id, inventory_id)
+CREATE TABLE order_items (
+    id VARCHAR(255) PRIMARY KEY,
+    order_id VARCHAR(255) REFERENCES orders(id) ON DELETE CASCADE,
+    menu_item_id VARCHAR(255) REFERENCES menu_items(id) ON DELETE RESTRICT,
+    quantity INTEGER NOT NULL,
+    unit_price DECIMAL(10, 2) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT positive_quantity CHECK (quantity > 0),
+    CONSTRAINT positive_unit_price CHECK (unit_price > 0)
 );
 
--- History Tables
-
--- Table to track order status changes (order status history)
 CREATE TABLE order_status_history (
-    history_id SERIAL PRIMARY KEY,
-    order_id INT REFERENCES orders(order_id) ON DELETE CASCADE,
+    id VARCHAR(255) PRIMARY KEY,
+    order_id VARCHAR(255) REFERENCES orders(id) ON DELETE CASCADE,
     status order_status NOT NULL,
-    changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Table for tracking price history (for menu items)
 CREATE TABLE price_history (
-    history_id SERIAL PRIMARY KEY,
-    menu_item_id INT REFERENCES menu_items(menu_item_id) ON DELETE CASCADE,
+    id VARCHAR(255) PRIMARY KEY,
+    menu_item_id VARCHAR(255) REFERENCES menu_items(id) ON DELETE CASCADE,
     price DECIMAL(10, 2) NOT NULL,
-    effective_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    effective_from TIMESTAMP WITH TIME ZONE NOT NULL,
+    effective_to TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT positive_price CHECK (price > 0)
 );
 
--- Table for inventory transactions (inventory movements like restocks, usage)
 CREATE TABLE inventory_transactions (
-    transaction_id SERIAL PRIMARY KEY,
-    inventory_id INT REFERENCES inventory(inventory_id) ON DELETE CASCADE,
+    id VARCHAR(255) PRIMARY KEY,
+    inventory_id VARCHAR(255) REFERENCES inventory(id) ON DELETE RESTRICT,
+    transaction_type inventory_transaction_type NOT NULL,
     quantity DECIMAL(10, 2) NOT NULL,
-    transaction_type VARCHAR(50) NOT NULL,  -- 'restock', 'usage'
-    transaction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    order_id VARCHAR(255) REFERENCES orders(id) ON DELETE SET NULL,
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT non_zero_quantity CHECK (quantity != 0)
 );
 
--- 3. Create Index Statements
+-- Create indexes for better query performance
+CREATE INDEX idx_menu_items_category ON menu_items(category);
+CREATE INDEX idx_menu_items_availability ON menu_items(is_available);
+CREATE INDEX idx_inventory_minimum_quantity ON inventory(minimum_quantity) WHERE quantity <= minimum_quantity;
+CREATE INDEX idx_orders_status ON orders(status);
+CREATE INDEX idx_orders_created_at ON orders(created_at);
+CREATE INDEX idx_order_items_order_id ON order_items(order_id);
+CREATE INDEX idx_order_status_history_order_id ON order_status_history(order_id);
+CREATE INDEX idx_price_history_menu_item_id ON price_history(menu_item_id);
+CREATE INDEX idx_inventory_transactions_inventory_id ON inventory_transactions(inventory_id);
 
--- Index on menu items (for quick lookups by category)
-CREATE INDEX idx_menu_items_category ON menu_items (category);
+-- Full-text search indexes
+CREATE INDEX idx_menu_items_name_description ON menu_items 
+    USING gin((setweight(to_tsvector('english', name), 'A') || 
+               setweight(to_tsvector('english', COALESCE(description, '')), 'B')));
 
--- Index on orders (for quick search by order status)
-CREATE INDEX idx_orders_status ON orders (order_status);
+CREATE INDEX idx_customers_name ON customers 
+    USING gin(to_tsvector('english', name));
 
--- Full text search index for menu item names and descriptions
-CREATE INDEX idx_menu_items_full_text ON menu_items USING gin(to_tsvector('english', name || ' ' || description));
+-- Triggers for maintaining updated_at timestamps
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
 
--- Composite index for inventory transactions based on inventory_id and transaction type
-CREATE INDEX idx_inventory_transactions_type ON inventory_transactions (inventory_id, transaction_type);
+CREATE TRIGGER update_customers_updated_at
+    BEFORE UPDATE ON customers
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
 
--- 4. Mock Data Inserts
+CREATE TRIGGER update_menu_items_updated_at
+    BEFORE UPDATE ON menu_items
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
 
--- Inserting sample menu items
-INSERT INTO menu_items (name, description, price, category)
-VALUES 
-    ('Espresso', 'Strong black coffee', 3.50, 'coffee'),
-    ('Americano', 'Espresso with hot water', 4.00, 'coffee'),
-    ('Cappuccino', 'Espresso with steamed milk and foam', 4.50, 'coffee'),
-    ('Latte', 'Espresso with steamed milk', 4.00, 'coffee'),
-    ('Mocha', 'Espresso with chocolate and steamed milk', 4.75, 'coffee'),
-    ('Cinnamon Roll', 'Freshly baked cinnamon roll', 2.50, 'pastry'),
-    ('Bagel', 'Toasted bagel with cream cheese', 3.00, 'pastry'),
-    ('Croissant', 'Flaky buttery croissant', 2.75, 'pastry'),
-    ('Iced Coffee', 'Cold brewed coffee', 3.25, 'coffee'),
-    ('Iced Latte', 'Cold latte', 4.25, 'coffee');
+CREATE TRIGGER update_inventory_updated_at
+    BEFORE UPDATE ON inventory
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
 
--- Inserting sample inventory items
-INSERT INTO inventory (name, quantity, uom, price)
-VALUES 
-    ('Coffee Beans', 50, 'kg', 5.00),
-    ('Milk', 100, 'liter', 2.00),
-    ('Sugar', 10, 'kg', 1.50),
-    ('Flour', 20, 'kg', 0.80),
-    ('Cinnamon', 2, 'kg', 8.00),
-    ('Chocolate Syrup', 5, 'liter', 6.00),
-    ('Butter', 15, 'kg', 3.00),
-    ('Eggs', 200, 'piece', 0.25),
-    ('Cream Cheese', 10, 'kg', 4.00),
-    ('Vanilla Syrup', 3, 'liter', 7.00);
+CREATE TRIGGER update_orders_updated_at
+    BEFORE UPDATE ON orders
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
 
--- Inserting sample orders
-INSERT INTO orders (customer_name, order_status, total_amount)
-VALUES 
-    ('John Doe', 'pending', 15.50),
-    ('Jane Smith', 'completed', 10.75),
-    ('Jim Brown', 'in_progress', 12.00),
-    ('Emily Clark', 'canceled', 0.00),
-    ('Robert White', 'pending', 22.00),
-    ('Alice Green', 'completed', 19.50),
-    ('Michael King', 'in_progress', 18.25),
-    ('Sarah Blue', 'completed', 20.00),
-    ('David Black', 'pending', 11.00),
-    ('Mary Pink', 'in_progress', 17.50);
+-- Trigger for maintaining order status history
+CREATE OR REPLACE FUNCTION track_order_status_changes()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF (TG_OP = 'INSERT') OR (OLD.status IS DISTINCT FROM NEW.status) THEN
+        INSERT INTO order_status_history (id, order_id, status)
+        VALUES (NEW.id || '_' || EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::TEXT, NEW.id, NEW.status);
+    END IF;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
 
--- Inserting sample order status history
-INSERT INTO order_status_history (order_id, status)
-VALUES 
-    (1, 'pending'),
-    (2, 'completed'),
-    (3, 'in_progress'),
-    (4, 'canceled'),
-    (5, 'pending'),
-    (6, 'completed'),
-    (7, 'in_progress'),
-    (8, 'completed'),
-    (9, 'pending'),
-    (10, 'in_progress');
+CREATE TRIGGER track_order_status_changes
+    AFTER INSERT OR UPDATE ON orders
+    FOR EACH ROW
+    EXECUTE FUNCTION track_order_status_changes();
 
--- Inserting sample price history for menu items
-INSERT INTO price_history (menu_item_id, price)
-VALUES 
-    (1, 3.50),
-    (2, 4.00),
-    (3, 4.50),
-    (4, 4.00),
-    (5, 4.75),
-    (6, 2.50),
-    (7, 3.00),
-    (8, 2.75),
-    (9, 3.25),
-    (10, 4.25);
+-- Trigger for maintaining price history
+CREATE OR REPLACE FUNCTION track_price_changes()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF (TG_OP = 'INSERT') OR (OLD.current_price IS DISTINCT FROM NEW.current_price) THEN
+        UPDATE price_history
+        SET effective_to = CURRENT_TIMESTAMP
+        WHERE menu_item_id = NEW.id AND effective_to IS NULL;
+        
+        INSERT INTO price_history (
+            id,
+            menu_item_id,
+            price,
+            effective_from
+        )
+        VALUES (
+            NEW.id || '_' || EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::TEXT,
+            NEW.id,
+            NEW.current_price,
+            CURRENT_TIMESTAMP
+        );
+    END IF;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
 
--- Inserting sample inventory transactions (restocks and usage)
-INSERT INTO inventory_transactions (inventory_id, quantity, transaction_type)
-VALUES 
-    (1, 10, 'restock'),
-    (2, 20, 'usage'),
-    (3, 5, 'usage'),
-    (4, 10, 'restock'),
-    (5, 2, 'restock'),
-    (6, 3, 'usage'),
-    (7, 7, 'restock'),
-    (8, 50, 'usage'),
-    (9, 5, 'restock'),
-    (10, 2, 'usage');
+CREATE TRIGGER track_price_changes
+    AFTER INSERT OR UPDATE ON menu_items
+    FOR EACH ROW
+    EXECUTE FUNCTION track_price_changes();
 
--- 5. Testing Coverage
+-- Function for updating inventory
+CREATE OR REPLACE FUNCTION update_inventory_quantity(
+    p_inventory_id VARCHAR(255),
+    p_quantity DECIMAL,
+    p_transaction_type inventory_transaction_type,
+    p_order_id VARCHAR(255) DEFAULT NULL,
+    p_notes TEXT DEFAULT NULL
+)
+RETURNS VOID AS $$
+DECLARE
+    v_transaction_id VARCHAR(255);
+BEGIN
+    -- Generate transaction ID
+    v_transaction_id := p_inventory_id || '_' || EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::TEXT;
 
--- Test Full text search on menu items
--- Example query: Search for "latte"
-SELECT * FROM menu_items WHERE to_tsvector('english', name || ' ' || description) @@ to_tsquery('english', 'latte');
+    -- Update inventory quantity
+    UPDATE inventory
+    SET quantity = CASE
+        WHEN p_transaction_type = 'increment' THEN quantity + p_quantity
+        WHEN p_transaction_type = 'decrement' THEN quantity - p_quantity
+        WHEN p_transaction_type = 'adjustment' THEN p_quantity
+    END
+    WHERE id = p_inventory_id;
 
--- Test date range query for orders (e.g., orders within the last 7 days)
-SELECT * FROM orders WHERE order_date >= CURRENT_DATE - INTERVAL '7 days';
-
--- Test status transition in order_status_history (e.g., order status change for order 1)
-SELECT * FROM order_status_history WHERE order_id = 1;
-
--- Test inventory calculations (e.g., total inventory quantity for "Milk")
-SELECT SUM(quantity) FROM inventory WHERE name = 'Milk';
-
--- Test price history tracking (e.g., price history for item 1)
-SELECT * FROM price_history WHERE menu_item_id = 1;
+    -- Record transaction
+    INSERT INTO inventory_transactions (
+        id,
+        inventory_id, 
+        transaction_type, 
+        quantity, 
+        order_id, 
+        notes
+    )
+    VALUES (
+        v_transaction_id,
+        p_inventory_id, 
+        p_transaction_type, 
+        p_quantity, 
+        p_order_id, 
+        p_notes
+    );
+END;
+$$ LANGUAGE plpgsql;
