@@ -12,7 +12,7 @@ docker-compose up --build
 docker exec -it frappuccino_db_1 bash
 psql -U latte -d frappuccino
 ```
-## to fix issues and table are created
+## to fix issues and ensure the table are created
 ```bash
 docker-compose down -v
 ```
