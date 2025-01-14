@@ -1,31 +1,68 @@
 package main
 
 import (
-	"flag"
+	"database/sql"
 	"fmt"
-	. "frappuccino/config"
-	. "frappuccino/internal/handler"
-	"net/http"
+	"log"
+
+	_ "github.com/lib/pq" // PostgreSQL driver
 )
 
-func main() {
-	flag.IntVar(&PortN, "port", 8080, "Port number")
-	flag.StringVar(&Path, "dir", "data", "Path to the directory")
-	flag.Usage = func() {
-		fmt.Print("Coffee Shop Management System\n\n",
-			"Usage:\n",
-			"\thot-coffee [-port <N>] [-dir <S>]\n\thot-coffee --help\n\n",
-			"Options:\n",
-			"- --help\tShow this screen.\n",
-			"- --port N\tPort number\n",
-			"- --dir S\tPath to the directory\n")
-	}
-	flag.Parse()
-	fmt.Printf("Server Started\nPort: %d\tDirectory: %s\n", PortN, Path)
-	Path = Path + "/"
-	mux := http.NewServeMux()
-	mux.Handle("/", &RequestHandler{})
-	port := ":" + fmt.Sprint(PortN)
+const (
+	dbUser     = "latte"
+	dbPassword = "latte"
+	dbHost     = "db"
+	dbPort     = "5432"
+	dbName     = "frappuccino"
+)
 
-	http.ListenAndServe(port, mux)
+func getDBConnectionString() string {
+	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
+		dbUser, dbPassword, dbHost, dbPort, dbName)
 }
+
+func main() {
+	// Connect to the database
+	connStr := getDBConnectionString()
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		log.Fatalf("Failed to open a DB connection: %v", err)
+	}
+	defer db.Close()
+
+	// Test the connection
+	if err := db.Ping(); err != nil {
+		log.Fatalf("Failed to connect to the DB: %v", err)
+	}
+
+	fmt.Println("Connected to the database!")
+
+	// Query the database
+	query := "SELECT * from customers"
+	rows, err := db.Query(query)
+	if err != nil {
+		log.Fatalf("Failed to execute query: %v", err)
+	}
+	defer rows.Close()
+
+	// Iterate over the rows
+	fmt.Println("Users:")
+	for rows.Next() {
+		var id int
+		var name, email string
+
+		// Scan the row into variables
+		if err := rows.Scan(&id, &name, &email); err != nil {
+			log.Fatalf("Failed to scan row: %v", err)
+		}
+
+		// Print the result
+		fmt.Printf("ID: %d, Name: %s, Email: %s\n", id, name, email)
+	}
+
+	// Check for errors encountered during iteration
+	if err := rows.Err(); err != nil {
+		log.Fatalf("Error during row iteration: %v", err)
+	}
+}
+
