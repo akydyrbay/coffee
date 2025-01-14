@@ -1,11 +1,11 @@
 package main
 
 import (
-	"database/sql"
+	"context"
 	"fmt"
-	"log"
+	"os"
 
-	_ "github.com/lib/pq" // PostgreSQL driver
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -21,44 +21,31 @@ func getDBConnectionString() string {
 		dbUser, dbPassword, dbHost, dbPort, dbName)
 }
 
+//id VARCHAR(255) PRIMARY KEY,
+//name VARCHAR(255) NOT NULL,
+//email VARCHAR(255) UNIQUE,
+//phone VARCHAR(50),
+
 func main() {
 	// Connect to the database
 	connStr := getDBConnectionString()
-	db, err := sql.Open("postgres", connStr)
+	conn, err := pgx.Connect(context.Background(), connStr)
 	if err != nil {
-		log.Fatalf("Failed to open a DB connection: %v", err)
+		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
 	}
-	defer db.Close()
-
-	// Test the connection
-	if err := db.Ping(); err != nil {
-		log.Fatalf("Failed to connect to the DB: %v", err)
-	}
-
-	fmt.Println("Connected to the database!")
-
-	// Query the database
-	query := "SELECT id, name, email, phone from customers"
-	rows, err := db.Query(query)
+	defer conn.Close(context.Background())
+	err = conn.Ping(context.Background())
 	if err != nil {
-		log.Fatalf("Failed to execute query: %v", err)
+		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
 	}
-	defer rows.Close()
+	var id string
+	var name string
+	var email string
+	var phone string
 
-	// Iterate over the rows
-
-	fmt.Println("Query results:")
-	for rows.Next() {
-		var id string
-		var name string
-		var email string
-		var phone string
-		if err := rows.Scan(&id, &name, &email, &phone); err != nil {
-			log.Fatalf("Failed to scan row: %v", err)
-			fmt.Println(err)
-
-		}
-		fmt.Println(id, name, email, phone)
+	err = conn.QueryRow(context.Background(), "select id, name, email, phone from customers").Scan(&id, &name, &email, &phone)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "QueryRow failed: %v\n", err)
 	}
-
+	fmt.Printf("id: %s, name: %s, email: %s, phone: %s\n", id, name, email, phone)
 }
