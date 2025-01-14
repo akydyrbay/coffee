@@ -38,7 +38,7 @@ func main() {
 	fmt.Println("Connected to the database!")
 
 	// Query the database
-	query := "SELECT * from customers"
+	query := "SELECT id, name, email, phone from customers"
 	rows, err := db.Query(query)
 	if err != nil {
 		log.Fatalf("Failed to execute query: %v", err)
@@ -46,23 +46,19 @@ func main() {
 	defer rows.Close()
 
 	// Iterate over the rows
-	fmt.Println("Users:")
+
+	fmt.Println("Query results:")
 	for rows.Next() {
-		var id int
-		var name, email string
-
-		// Scan the row into variables
-		if err := rows.Scan(&id, &name, &email); err != nil {
+		var id string
+		var name string
+		var email string
+		var phone string
+		if err := rows.Scan(&id, &name, &email, &phone); err != nil {
 			log.Fatalf("Failed to scan row: %v", err)
+			fmt.Println(err)
+
 		}
-
-		// Print the result
-		fmt.Printf("ID: %d, Name: %s, Email: %s\n", id, name, email)
+		fmt.Println(id, name, email, phone)
 	}
 
-	// Check for errors encountered during iteration
-	if err := rows.Err(); err != nil {
-		log.Fatalf("Error during row iteration: %v", err)
-	}
 }
-
