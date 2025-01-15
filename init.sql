@@ -46,6 +46,7 @@ CREATE TABLE menu_item_ingredients (
     menu_item_id VARCHAR(255) REFERENCES menu_items(id) ON DELETE CASCADE,
     inventory_id VARCHAR(255) REFERENCES inventory(id) ON DELETE RESTRICT,
     quantity DECIMAL(10, 2) NOT NULL,
+    unit VARCHAR(50) NOT NULL,
     PRIMARY KEY (menu_item_id, inventory_id),
     CONSTRAINT positive_quantity CHECK (quantity > 0)
 );

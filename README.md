@@ -54,13 +54,3 @@ In addition, new features will be implemented for reporting and aggregation, suc
 As systems scale, databases that rely on JSON for data storage often become difficult to manage and maintain. Relational databases, like PostgreSQL, provide more robust data management, scalability, and advanced querying capabilities, making them a better solution for growing applications. This project aims to address the challenges of using a JSON-based system by transitioning to a more structured, performant, and scalable PostgreSQL database.
 
 The project will involve creating a normalized database schema, defining the relationships between entities, and refactoring the application to use SQL queries for CRUD operations. Additionally, it will introduce new functionality for aggregating and reporting business metrics, leveraging PostgreSQL’s powerful aggregation capabilities.
-
-
-### Relationships of ERD
-orders is linked to customers (via customer_id).
-order_items connects orders to menu_items, storing quantity and price at the time of the order.
-menu_items is connected to menu_item_ingredients, which links the items to the ingredients, including quantities for recipes.
-ingredients is used in menu_item_ingredients and inventory_transactions to track ingredient usage and stock levels.
-orders has a one-to-many relationship with order_status_history, storing order status changes over time.
-menu_items is related to price_history to track pricing over time.
-staff can be connected to orders (if needed) to track which staff member handled a particular order.
