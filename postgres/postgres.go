@@ -10,7 +10,7 @@ const (
 	dbName     = "frappuccino"
 )
 
-func getDBConnectionString() string {
+func GetDBConnectionString() string {
 	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
 		dbUser, dbPassword, dbHost, dbPort, dbName)
 }

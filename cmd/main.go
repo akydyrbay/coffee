@@ -3,8 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"frappuccinno/postgres"
 	"os"
+
+	"frappuccino/postgres"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -28,7 +29,7 @@ import (
 // phone VARCHAR(50),
 func main() {
 	// Connect to the database
-	connStr := postgres.getDBConnectionString()
+	connStr := postgres.GetDBConnectionString()
 	conn, err := pgx.Connect(context.Background(), connStr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
